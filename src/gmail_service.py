@@ -3,6 +3,7 @@ import sys
 import pickle
 from datetime import datetime
 import base64
+from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from google.auth.transport.requests import Request
@@ -50,15 +51,20 @@ class GmailService:
         
         self.service = build('gmail', 'v1', credentials=creds)
     
-    def get_unread_emails(self, after_timestamp=None):
+    def get_unread_emails(self, after_timestamp=None, subject_filter=None):
         """
-        Fetch unread emails from the Inbox, optionally filtering by timestamp.
+        Fetch unread emails from the Inbox, optionally filtering by timestamp and subject.
         
         Args:
             after_timestamp (str, optional): ISO format timestamp to fetch emails after.
+            subject_filter (str, optional): Subject keyword to filter emails (Gmail search syntax).
         
         Returns:
-            list: List of email dictionaries with id, subject, sender, date, and snippet.
+            list: List of email dictionaries with id, subject, sender, date, and body.
+        
+        Examples:
+            - subject_filter="invoice" - emails with "invoice" in subject
+            - subject_filter="Order #" - emails with "Order #" in subject
         """
         try:
             # Build query for unread emails in inbox
@@ -69,6 +75,10 @@ class GmailService:
                 dt = datetime.fromisoformat(after_timestamp)
                 date_str = dt.strftime('%Y/%m/%d')
                 query += f' after:{date_str}'
+            
+            # Add subject filter if provided
+            if subject_filter:
+                query += f' subject:"{subject_filter}"'
             
             results = self.service.users().messages().list(
                 userId='me',
@@ -141,24 +151,44 @@ class GmailService:
 
     def get_full_body(self, message_payload):
         """
-        Recursively extracts the plain text body from the message payload.
+        Recursively extracts and cleans the email body.
         """
-        # 1. Check if the body data is in the top-level payload
-        body_data = message_payload.get('body', {}).get('data')
+        body_data = None
+        is_html = False
+
+        # 1. Check top-level payload
+        if 'body' in message_payload and message_payload['body'].get('data'):
+            body_data = message_payload['body']['data']
+            is_html = message_payload.get('mimeType') == 'text/html'
         
-        # 2. If not, look through the parts (common in multipart emails)
+        # 2. Look through multipart parts
         if not body_data and 'parts' in message_payload:
             for part in message_payload['parts']:
-                if part['mimeType'] == 'text/plain': # Prioritize plain text
+                # Prioritize plain text if available
+                if part['mimeType'] == 'text/plain':
                     body_data = part.get('body', {}).get('data')
+                    is_html = False
                     break
-                elif part['mimeType'] == 'text/html': # Fallback to HTML
+                # Fallback to HTML if no plain text is found yet
+                elif part['mimeType'] == 'text/html':
                     body_data = part.get('body', {}).get('data')
+                    is_html = True
 
         if body_data:
-            # Gmail uses base64url encoding
-            decoded_bytes = base64.urlsafe_b64decode(body_data)
-            return decoded_bytes.decode('utf-8')
+            # Decode the Base64url data
+            decoded_text = base64.urlsafe_b64decode(body_data).decode('utf-8')
+            
+            if is_html:
+                soup = BeautifulSoup(decoded_text, 'html.parser')
+                # Remove scripts and styles
+                for script_or_style in soup(["script", "style"]):
+                    script_or_style.decompose()
+                text = soup.get_text(separator=' ').strip()
+                lines = text.splitlines()
+                clean_lines = [line.strip() for line in lines if line.strip()]
+                return "\n".join(clean_lines)
+            
+            return decoded_text.strip()
         
         return "No content found"
     
