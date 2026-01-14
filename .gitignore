@@ -2,7 +2,7 @@
 credentials/credentials*.json
 token.json
 
-processed_emails.txt
+state.db
 
 # Python
 __pycache__/

@@ -1,10 +1,10 @@
 import os
 import sys
 import pickle
+from datetime import datetime
+import base64
 
-# Add parent directory to path to import config
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -47,23 +47,33 @@ class GmailService:
             # Save credentials for future runs
             with open(config.TOKEN_FILE, 'wb') as token:
                 pickle.dump(creds, token)
-                # token.write(creds.to_json())
         
         self.service = build('gmail', 'v1', credentials=creds)
     
-    def get_unread_emails(self):
+    def get_unread_emails(self, after_timestamp=None):
         """
-        Fetch all unread emails from the Inbox.
+        Fetch unread emails from the Inbox, optionally filtering by timestamp.
+        
+        Args:
+            after_timestamp (str, optional): ISO format timestamp to fetch emails after.
         
         Returns:
             list: List of email dictionaries with id, subject, sender, date, and snippet.
         """
         try:
-            # Query for unread emails in inbox
+            # Build query for unread emails in inbox
+            query = 'is:unread in:inbox'
+            
+            # Add timestamp filter if provided
+            if after_timestamp:
+                dt = datetime.fromisoformat(after_timestamp)
+                date_str = dt.strftime('%Y/%m/%d')
+                query += f' after:{date_str}'
+            
             results = self.service.users().messages().list(
                 userId='me',
-                q='is:unread in:inbox',
-                maxResults=20
+                q=query,
+                maxResults=100
             ).execute()
             
             messages = results.get('messages', [])
@@ -76,8 +86,6 @@ class GmailService:
                 email_data = self._get_email_details(message['id'])
                 if email_data:
                     emails.append(email_data)
-            
-            print(emails)
             
             return emails
         
@@ -110,13 +118,14 @@ class GmailService:
             subject = self._get_header_value(headers, 'Subject')
             sender = self._get_header_value(headers, 'From')
             date = self._get_header_value(headers, 'Date')
+            body = self.get_full_body(message['payload'])
             
             return {
                 'id': message_id,
                 'subject': subject,
                 'sender': sender,
                 'date': date,
-                'snippet': message.get('snippet', '')
+                'body': body,
             }
         
         except HttpError as error:
@@ -129,3 +138,56 @@ class GmailService:
             if header['name'] == name:
                 return header['value']
         return ''
+
+    def get_full_body(self, message_payload):
+        """
+        Recursively extracts the plain text body from the message payload.
+        """
+        # 1. Check if the body data is in the top-level payload
+        body_data = message_payload.get('body', {}).get('data')
+        
+        # 2. If not, look through the parts (common in multipart emails)
+        if not body_data and 'parts' in message_payload:
+            for part in message_payload['parts']:
+                if part['mimeType'] == 'text/plain': # Prioritize plain text
+                    body_data = part.get('body', {}).get('data')
+                    break
+                elif part['mimeType'] == 'text/html': # Fallback to HTML
+                    body_data = part.get('body', {}).get('data')
+
+        if body_data:
+            # Gmail uses base64url encoding
+            decoded_bytes = base64.urlsafe_b64decode(body_data)
+            return decoded_bytes.decode('utf-8')
+        
+        return "No content found"
+    
+    def mark_emails_as_read(self, message_ids):
+        """
+        Mark multiple emails as read by removing the UNREAD label using batch modify.
+        
+        Args:
+            message_ids (list): List of Gmail message IDs to mark as read.
+        
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if not message_ids:
+            return True
+        
+        try:
+            # Use batchModify to remove UNREAD label from multiple messages
+            self.service.users().messages().batchModify(
+                userId='me',
+                body={
+                    'ids': message_ids,
+                    'removeLabelIds': ['UNREAD']
+                }
+            ).execute()
+            
+            print(f"✓ Marked {len(message_ids)} emails as read in Gmail")
+            return True
+        
+        except HttpError as error:
+            print(f"Error marking emails as read: {error}")
+            return False

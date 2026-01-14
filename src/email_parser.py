@@ -1,41 +1,39 @@
 import os
 import sys
 
-# Add parent directory to path to import config
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import config
+from db.init import init_db
+from db.queries import (
+    is_processed as db_is_processed, 
+    mark_as_processed as db_mark_as_processed,
+    get_last_run_timestamp,
+    update_last_run_timestamp
+)
 
 
 class EmailStateManager:
-    """Manages state to track processed emails and prevent duplicates."""
+    """Manages state to track processed emails and prevent duplicates using SQLite database."""
     
-    def __init__(self, state_file=None):
-        self.state_file = state_file or config.STATE_FILE
-        self.processed_ids = self._load_state()
+    def __init__(self):
+        # Initialize the database
+        init_db()
     
-    def _load_state(self):
-        """Load previously processed email IDs from state file."""
-        if not os.path.exists(self.state_file):
-            return set()
-        
-        with open(self.state_file, 'r') as f:
-            return set(line.strip() for line in f if line.strip())
+    def get_last_run_timestamp(self):
+        """Get the timestamp of the last successful run."""
+        return get_last_run_timestamp()
     
-    def _save_state(self):
-        """Save processed email IDs to state file."""
-        with open(self.state_file, 'w') as f:
-            for email_id in sorted(self.processed_ids):
-                f.write(f"{email_id}\n")
+    def update_last_run_timestamp(self):
+        """Update the last run timestamp to current time."""
+        return update_last_run_timestamp()
     
     def is_processed(self, email_id):
         """Check if an email has already been processed."""
-        return email_id in self.processed_ids
+        return db_is_processed(email_id)
     
     def mark_as_processed(self, email_id):
-        """Mark an email as processed and save state."""
-        self.processed_ids.add(email_id)
-        self._save_state()
+        """Mark an email as processed in the database."""
+        db_mark_as_processed(email_id)
     
     def filter_new_emails(self, emails):
         """
@@ -51,7 +49,7 @@ class EmailStateManager:
 
 
 def parse_email_data(email):
-    print(email)
+    # print(email)
     """
     Parse email data into a structured format for spreadsheet insertion.
     Extracts the four critical fields: Sender's Email, Subject, Date/Time, and Plain Text Body.
@@ -70,7 +68,7 @@ def parse_email_data(email):
         'sender_email': sender_email,
         'subject': email.get('subject', ''),
         'date': email.get('date', ''),
-        'body': email.get('snippet', '')
+        'body': email.get('body', '')
     }
 
 

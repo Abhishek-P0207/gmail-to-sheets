@@ -1,9 +1,7 @@
 import sys
 import os
 
-# Add parent directory to path to import config
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from gmail_service import GmailService
 from sheets_service import SheetsService
 from email_parser import EmailStateManager, parse_email_data
@@ -48,18 +46,21 @@ def main():
     # Initialize state manager
     print("\n4. Loading state manager...")
     state_manager = EmailStateManager()
-    print(f"✓ Loaded {len(state_manager.processed_ids)} previously processed emails")
+    last_run = state_manager.get_last_run_timestamp()
+    if last_run:
+        print(f"✓ State manager initialized (last run: {last_run})")
+    else:
+        print("✓ State manager initialized (first run)")
     
-    # Fetch unread emails
-    print("\n5. Fetching unread emails from Inbox...")
-    unread_emails = gmail.get_unread_emails()
-    print(f"✓ Found {len(unread_emails)} unread emails")
+    # Fetch unread emails since last run
+    print("\n5. Fetching new emails from Inbox...")
+    unread_emails = gmail.get_unread_emails(after_timestamp=last_run)
+    print(f"✓ Found {len(unread_emails)} emails since last run")
     
     # Filter out already processed emails
     print("\n6. Filtering new emails...")
     new_emails = state_manager.filter_new_emails(unread_emails)
     print(f"✓ {len(new_emails)} new emails to process")
-    # print(new_emails)
     
     if not new_emails:
         print("\n✓ No new emails to process. Exiting.")
@@ -79,17 +80,18 @@ def main():
             print(f"    Subject: {email['subject'][:50]}..." if len(email['subject']) > 50 else f"    Subject: {email['subject']}")
             print(f"    Date: {email['date']}")
             print(f"    Body: {email['body'][:80]}..." if len(email['body']) > 80 else f"    Body: {email['body']}")
-            print(f"    Email: {email}")
     
     # Add to Google Sheets
     print("\n8. Adding emails to Google Sheets...")
     rows_added = sheets.append_emails(parsed_emails)
     print(f"✓ Added {rows_added} rows to spreadsheet")
     
-    # Mark emails as processed
+    # Mark emails as processed and update last run timestamp
     print("\n9. Updating state...")
     for email in new_emails:
         state_manager.mark_as_processed(email['id'])
+    state_manager.update_last_run_timestamp()
+    gmail.mark_emails_as_read([email['id'] for email in new_emails])
     print("✓ State updated")
     
     print("\n" + "=" * 60)
@@ -98,7 +100,6 @@ def main():
     print(f"  - Total unread emails: {len(unread_emails)}")
     print(f"  - New emails processed: {len(new_emails)}")
     print(f"  - Rows added to sheet: {rows_added}")
-    print(f"  - Total processed (all time): {len(state_manager.processed_ids)}")
     print("=" * 60)
 
 
