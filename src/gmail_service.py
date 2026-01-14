@@ -51,13 +51,14 @@ class GmailService:
         
         self.service = build('gmail', 'v1', credentials=creds)
     
-    def get_unread_emails(self, after_timestamp=None, subject_filter=None):
+    def get_unread_emails(self, after_timestamp=None, subject_filter=None, exclude_noreply=True):
         """
         Fetch unread emails from the Inbox, optionally filtering by timestamp and subject.
         
         Args:
             after_timestamp (str, optional): ISO format timestamp to fetch emails after.
             subject_filter (str, optional): Subject keyword to filter emails (Gmail search syntax).
+            exclude_noreply (bool, optional): Exclude automated no-reply emails. Default True.
         
         Returns:
             list: List of email dictionaries with id, subject, sender, date, and body.
@@ -65,6 +66,7 @@ class GmailService:
         Examples:
             - subject_filter="invoice" - emails with "invoice" in subject
             - subject_filter="Order #" - emails with "Order #" in subject
+            - exclude_noreply=True - excludes noreply@, no-reply@, donotreply@ emails
         """
         try:
             # Build query for unread emails in inbox
@@ -79,6 +81,10 @@ class GmailService:
             # Add subject filter if provided
             if subject_filter:
                 query += f' subject:"{subject_filter}"'
+            
+            # Exclude no-reply emails
+            if exclude_noreply:
+                query += ' -from:noreply -from:no-reply -from:donotreply -from:do-not-reply'
             
             results = self.service.users().messages().list(
                 userId='me',

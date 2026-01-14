@@ -54,15 +54,23 @@ def main():
     
     # Fetch unread emails since last run
     print("\n5. Fetching new emails from Inbox...")
-    
-    # Optional: Add subject filter here
-    # subject_filter = "invoice"  # Only process emails with "invoice" in subject
     subject_filter = None
+    exclude_noreply = True
     
-    unread_emails = gmail.get_unread_emails(after_timestamp=last_run, subject_filter=subject_filter)
+    unread_emails = gmail.get_unread_emails(
+        after_timestamp=last_run, 
+        subject_filter=subject_filter,
+        exclude_noreply=exclude_noreply
+    )
     
+    filter_msg = []
     if subject_filter:
-        print(f"✓ Found {len(unread_emails)} emails with subject containing '{subject_filter}'")
+        filter_msg.append(f"subject containing '{subject_filter}'")
+    if exclude_noreply:
+        filter_msg.append("excluding no-reply emails")
+    
+    if filter_msg:
+        print(f"✓ Found {len(unread_emails)} emails ({', '.join(filter_msg)})")
     else:
         print(f"✓ Found {len(unread_emails)} emails since last run")
     
