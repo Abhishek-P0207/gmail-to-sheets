@@ -1,62 +1,106 @@
-import os.path
+import sys
+import os
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+# Add parent directory to path to import config
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+from gmail_service import GmailService
+from sheets_service import SheetsService
+from email_parser import EmailStateManager, parse_email_data
+import config
 
 
 def main():
-  """Shows basic usage of the Gmail API.
-  Lists the user's Gmail labels.
-  """
-  creds = None
-  # The file token.json stores the user's access and refresh tokens, and is
-  # created automatically when the authorization flow completes for the first
-  # time.
-  if os.path.exists("token.json"):
-    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-  # If there are no (valid) credentials available, let the user log in.
-  if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-      creds.refresh(Request())
-    else:
-      flow = InstalledAppFlow.from_client_secrets_file(
-          "../credentials/credentials.json", SCOPES
-      )
-      creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open("token.json", "w") as token:
-      token.write(creds.to_json())
-
-  try:
-    # Call the Gmail API
-    service = build("gmail", "v1", credentials=creds)
-    results = (
-        service.users().messages().list(userId="me", labelIds=["INBOX"]).execute()
-    )
-    messages = results.get("messages", [])
-
-    if not messages:
-        print("No messages found.")
+    """Main execution flow for Gmail-to-Sheets automation."""
+    
+    print("Starting Gmail-to-Sheets Automation...")
+    print("=" * 60)
+    
+    # Verify configuration
+    if config.SPREADSHEET_ID == 'YOUR_SPREADSHEET_ID_HERE':
+        print("\n⚠ ERROR: Please configure SPREADSHEET_ID in config.py")
+        print("  1. Create a Google Sheet")
+        print("  2. Copy the ID from the URL")
+        print("  3. Update SPREADSHEET_ID in config.py")
         return
+    
+    # Initialize Gmail service
+    print("\n1. Authenticating with Gmail API...")
+    gmail = GmailService()
+    print("✓ Gmail authentication successful")
+    
+    # Initialize Sheets service
+    print("\n2. Authenticating with Google Sheets API...")
+    sheets = SheetsService()
+    
+    # Verify spreadsheet access
+    if not sheets.verify_spreadsheet_access():
+        print("\n⚠ ERROR: Cannot access spreadsheet. Please check:")
+        print("  - SPREADSHEET_ID is correct in config.py")
+        print("  - You have edit access to the spreadsheet")
+        print("  - Google Sheets API is enabled in Google Cloud Console")
+        return
+    
+    # Initialize sheet with headers
+    print("\n3. Initializing spreadsheet...")
+    sheets.initialize_sheet()
+    
+    # Initialize state manager
+    print("\n4. Loading state manager...")
+    state_manager = EmailStateManager()
+    print(f"✓ Loaded {len(state_manager.processed_ids)} previously processed emails")
+    
+    # Fetch unread emails
+    print("\n5. Fetching unread emails from Inbox...")
+    unread_emails = gmail.get_unread_emails()
+    print(f"✓ Found {len(unread_emails)} unread emails")
+    
+    # Filter out already processed emails
+    print("\n6. Filtering new emails...")
+    new_emails = state_manager.filter_new_emails(unread_emails)
+    print(f"✓ {len(new_emails)} new emails to process")
+    # print(new_emails)
+    
+    if not new_emails:
+        print("\n✓ No new emails to process. Exiting.")
+        return
+    
+    # Parse email data
+    print("\n7. Parsing email data...")
+    parsed_emails = [parse_email_data(email) for email in new_emails]
+    print(f"✓ Parsed {len(parsed_emails)} emails")
+    
+    # Display parsed data for verification
+    if parsed_emails:
+        print("\n📧 Sample of parsed emails:")
+        for i, email in enumerate(parsed_emails[:2], 1):  # Show first 2
+            print(f"\n  Email {i}:")
+            print(f"    Sender: {email['sender_email']}")
+            print(f"    Subject: {email['subject'][:50]}..." if len(email['subject']) > 50 else f"    Subject: {email['subject']}")
+            print(f"    Date: {email['date']}")
+            print(f"    Body: {email['body'][:80]}..." if len(email['body']) > 80 else f"    Body: {email['body']}")
+            print(f"    Email: {email}")
+    
+    # Add to Google Sheets
+    print("\n8. Adding emails to Google Sheets...")
+    rows_added = sheets.append_emails(parsed_emails)
+    print(f"✓ Added {rows_added} rows to spreadsheet")
+    
+    # Mark emails as processed
+    print("\n9. Updating state...")
+    for email in new_emails:
+        state_manager.mark_as_processed(email['id'])
+    print("✓ State updated")
+    
+    print("\n" + "=" * 60)
+    print("✓ Process completed successfully!")
+    print("\nSummary:")
+    print(f"  - Total unread emails: {len(unread_emails)}")
+    print(f"  - New emails processed: {len(new_emails)}")
+    print(f"  - Rows added to sheet: {rows_added}")
+    print(f"  - Total processed (all time): {len(state_manager.processed_ids)}")
+    print("=" * 60)
 
-    print("Messages:")
-    for message in messages:
-        print(f'Message ID: {message["id"]}')
-        msg = (
-            service.users().messages().get(userId="me", id=message["id"]).execute()
-        )
-        print(f'  Subject: {msg["snippet"]}')
 
-  except HttpError as error:
-    # TODO(developer) - Handle errors from gmail API.
-    print(f"An error occurred: {error}")
-
-
-if __name__ == "__main__":
-  main()
+if __name__ == '__main__':
+    main()

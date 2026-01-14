@@ -1,6 +1,8 @@
 # Credentials
-credentials/credentials.json
+credentials/credentials*.json
 token.json
+
+processed_emails.txt
 
 # Python
 __pycache__/
